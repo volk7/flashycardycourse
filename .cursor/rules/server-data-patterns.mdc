@@ -1,0 +1,103 @@
+---
+alwaysApply: true
+---
+# Server Data Patterns
+
+Data flows through Next.js Server Components and Server Actions. Do not fetch database data from Client Components or Route Handlers when a Server Component or Server Action can handle it.
+
+## Rules
+
+1. **Reads** — fetch data in Server Components (pages, layouts, or server-only child components). Pass results as props to Client Components.
+2. **Writes** — all `insert`, `update`, and `delete` operations go through Server Actions (`"use server"`). Do not mutate the database from Client Components, Route Handlers, or client-side fetch calls.
+3. **Validation** — validate all input with [Zod](https://zod.dev). Define schemas once and reuse them for parsing and TypeScript types.
+4. **Server Action signatures** — accept a typed object (e.g. `CreateDeckInput`), never `FormData` as the parameter type. Parse with Zod inside the action before touching the database.
+
+## Conventions
+
+- Colocate Zod schemas with their Server Actions (e.g. `src/app/actions/decks.ts`) or in a shared `src/lib/schemas/` module when reused.
+- Derive input types with `z.infer<typeof schema>` — do not duplicate types by hand.
+- Client Components call Server Actions directly; convert form values to a plain object before invoking the action.
+- Combine with [clerk-auth.mdc](mdc:.cursor/rules/clerk-auth.mdc) — call `auth()` in every Server Action and scope mutations to the signed-in user.
+- Combine with [drizzle-database.mdc](mdc:.cursor/rules/drizzle-database.mdc) — use the shared `db` instance and schema tables for all queries.
+
+## Examples
+
+```typescript
+// ❌ BAD — fetch in a Client Component
+"use client";
+useEffect(() => {
+  fetch("/api/decks").then((r) => r.json()).then(setDecks);
+}, []);
+
+// ❌ BAD — database mutation in a Route Handler
+export async function POST(req: Request) {
+  const body = await req.json();
+  await db.insert(decksTable).values(body);
+}
+
+// ❌ BAD — FormData as the action parameter type
+export async function createDeck(formData: FormData) {
+  const title = formData.get("title") as string;
+  await db.insert(decksTable).values({ title, userId });
+}
+
+// ❌ BAD — no Zod validation
+export async function createDeck(input: { title: string }) {
+  await db.insert(decksTable).values(input);
+}
+```
+
+```typescript
+// ✅ GOOD — read in a Server Component
+export default async function DecksPage() {
+  const { userId } = await auth();
+  if (!userId) redirect("/sign-in");
+
+  const decks = await db
+    .select()
+    .from(decksTable)
+    .where(eq(decksTable.userId, userId));
+
+  return <DeckList decks={decks} />;
+}
+```
+
+```typescript
+// ✅ GOOD — typed input, Zod validation, Server Action mutation
+"use server";
+
+import { z } from "zod";
+import { auth } from "@clerk/nextjs/server";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { decksTable } from "@/db/schema";
+
+const createDeckSchema = z.object({
+  title: z.string().trim().min(1).max(100),
+});
+
+type CreateDeckInput = z.infer<typeof createDeckSchema>;
+
+export async function createDeck(input: CreateDeckInput) {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const { title } = createDeckSchema.parse(input);
+
+  await db.insert(decksTable).values({ title, userId });
+}
+```
+
+```typescript
+// ✅ GOOD — Client Component passes a typed object to the action
+"use client";
+
+import { createDeck } from "@/app/actions/decks";
+
+function CreateDeckForm() {
+  async function onSubmit(title: string) {
+    await createDeck({ title });
+  }
+  // ...
+}
+```
