@@ -1,0 +1,52 @@
+---
+alwaysApply: true
+---
+# Drizzle Database
+
+All database interactions must use Drizzle ORM with the project schema and query API. Do not use raw SQL, the Neon client directly, or other ORMs.
+
+## Key Files
+
+- Schema: [schema.ts](mdc:src/db/schema.ts) — table and relation definitions
+- Client: [index.ts](mdc:src/db/index.ts) — shared `db` instance (Neon + Drizzle)
+- Migrations: [drizzle.config.ts](mdc:drizzle.config.ts)
+
+## Rules
+
+1. Import `db` from `@/db` (or `src/db`) — never instantiate a separate Drizzle client in app code.
+2. Import table definitions from `@/db/schema` — never hardcode table or column names as strings.
+3. Use Drizzle query builders (`select`, `insert`, `update`, `delete`) or relational queries (`db.query.*`).
+4. Use operators from `drizzle-orm` (`eq`, `and`, `or`, etc.) for `where` clauses.
+5. Add or change tables only in [schema.ts](mdc:src/db/schema.ts), then generate migrations with `npx drizzle-kit generate`.
+
+## Schema
+
+- `decksTable` — decks owned by a Clerk `userId`
+- `cardsTable` — flashcards belonging to a deck (`deckId` FK, cascade delete)
+
+## Examples
+
+```typescript
+// ❌ BAD — raw SQL or direct Neon client
+const sql = neon(process.env.DATABASE_URL!);
+await sql`SELECT * FROM decks WHERE user_id = ${userId}`;
+
+// ❌ BAD — string table/column names
+await db.select().from("decks");
+
+// ✅ GOOD — Drizzle query builder
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { decksTable } from "@/db/schema";
+
+const decks = await db
+  .select()
+  .from(decksTable)
+  .where(eq(decksTable.userId, userId));
+
+// ✅ GOOD — relational query with relations from schema
+const decksWithCards = await db.query.decksTable.findMany({
+  with: { cards: true },
+  where: eq(decksTable.userId, userId),
+});
+```

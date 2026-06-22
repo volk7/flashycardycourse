@@ -1,0 +1,61 @@
+---
+alwaysApply: true
+---
+# Clerk Authentication & Data Ownership
+
+All authentication is handled by Clerk. Users must only read or mutate data that belongs to them.
+
+## Key Files
+
+- Middleware: [proxy.ts](mdc:src/proxy.ts) — protects non-public routes via `auth.protect()`
+- Schema: [schema.ts](mdc:src/db/schema.ts) — `decksTable.userId` ties decks to a Clerk user; cards belong to decks
+
+## Auth APIs
+
+- **Server** (Server Components, Server Actions, Route Handlers): `await auth()` from `@clerk/nextjs/server`
+- **Client** (Client Components): hooks from `@clerk/nextjs` (`useAuth`, `useUser`, etc.)
+- Never mix server and client auth APIs in the same component.
+
+## Data Ownership Rules
+
+1. **Never trust client input for identity** — always get `userId` from `await auth()`, never from params, form data, or request body.
+2. **Scope every query** — filter by `decksTable.userId` when reading decks; for cards, join through the deck and verify the deck's `userId`.
+3. **Scope every mutation** — `insert` must set `userId` from auth; `update`/`delete` must include ownership in the `where` clause (not just the resource id).
+4. **Protect Server Actions and API routes** — middleware alone is not enough; each action/handler must call `auth()` and enforce ownership before touching the database.
+5. **Do not leak other users' data** — if a resource exists but belongs to someone else, return 404 or a generic "not found" (not the actual record).
+
+## Examples
+
+```typescript
+// ❌ BAD — trusts client-supplied user id or fetches by id alone
+const deck = await db.select().from(decksTable).where(eq(decksTable.id, deckId));
+
+// ✅ GOOD — list decks for the signed-in user
+const { userId } = await auth();
+if (!userId) redirect("/sign-in");
+
+const decks = await db
+  .select()
+  .from(decksTable)
+  .where(eq(decksTable.userId, userId));
+
+// ✅ GOOD — fetch one deck only if owned
+const [deck] = await db
+  .select()
+  .from(decksTable)
+  .where(and(eq(decksTable.id, deckId), eq(decksTable.userId, userId)));
+
+// ✅ GOOD — mutate a card only through an owned deck
+await db
+  .delete(cardsTable)
+  .where(
+    and(
+      eq(cardsTable.id, cardId),
+      eq(cardsTable.deckId, deckId),
+      // deckId already verified to belong to userId above
+    ),
+  );
+
+// ✅ GOOD — create deck with server-derived owner
+await db.insert(decksTable).values({ title, userId });
+```
