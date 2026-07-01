@@ -51,6 +51,12 @@ type UpdateCardInput = z.infer<typeof updateCardSchema>;
 type DeleteCardInput = z.infer<typeof deleteCardSchema>;
 type GenerateCardsWithAiInput = z.infer<typeof generateCardsWithAiSchema>;
 
+function revalidateDeckCardPaths(deckId: number) {
+  revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/decks/${deckId}`);
+  revalidatePath(`/dashboard/decks/${deckId}/study`);
+}
+
 export async function createCard(input: CreateCardInput) {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
@@ -62,8 +68,7 @@ export async function createCard(input: CreateCardInput) {
 
   await db.insert(cardsTable).values({ deckId, front, back });
 
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/decks/${deckId}`);
+  revalidateDeckCardPaths(deckId);
 }
 
 export async function updateCard(input: UpdateCardInput) {
@@ -80,8 +85,7 @@ export async function updateCard(input: UpdateCardInput) {
     .set({ front, back, updatedAt: new Date() })
     .where(and(eq(cardsTable.id, cardId), eq(cardsTable.deckId, deckId)));
 
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/decks/${deckId}`);
+  revalidateDeckCardPaths(deckId);
 }
 
 export async function deleteCard(input: DeleteCardInput) {
@@ -97,8 +101,7 @@ export async function deleteCard(input: DeleteCardInput) {
     .delete(cardsTable)
     .where(and(eq(cardsTable.id, cardId), eq(cardsTable.deckId, deckId)));
 
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/decks/${deckId}`);
+  revalidateDeckCardPaths(deckId);
 }
 
 export async function generateCardsWithAi(input: GenerateCardsWithAiInput) {
@@ -154,6 +157,5 @@ export async function generateCardsWithAi(input: GenerateCardsWithAiInput) {
     throw error;
   }
 
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/decks/${deckId}`);
+  revalidateDeckCardPaths(deckId);
 }
