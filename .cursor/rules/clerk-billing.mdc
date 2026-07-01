@@ -1,0 +1,97 @@
+---
+alwaysApply: true
+---
+# Clerk Billing & Feature Gating
+
+This app uses [Clerk billing](https://clerk.com/docs/billing/b2c-saas) for subscriptions and payments. Gate premium functionality with **features** (preferred) or **plans**.
+
+## Plans & Features
+
+| Plan | Slug | Features |
+|------|------|----------|
+| Free | `free_user` | `3_deck_limit` |
+| Pro | `pro` | `unlimited_decks`, `ai_flashcard_generation` |
+
+Use these exact slugs in `has()`, `<Protect>`, and the Clerk Dashboard.
+
+## Server — `has()` (preferred for Server Components & Server Actions)
+
+```typescript
+import { auth } from "@clerk/nextjs/server";
+
+const { has, userId } = await auth();
+if (!userId) throw new Error("Unauthorized");
+
+// Feature check (preferred)
+const canUseAi = has({ feature: "ai_flashcard_generation" });
+const hasUnlimitedDecks = has({ feature: "unlimited_decks" });
+
+// Plan check (when plan-level access is enough)
+const isPro = has({ plan: "pro" });
+```
+
+Combine with [clerk-auth.mdc](mdc:.cursor/rules/clerk-auth.mdc) — always call `auth()` in Server Actions and enforce limits **server-side**, not only in the UI.
+
+## Client — `<Protect>`
+
+```tsx
+import { Protect } from "@clerk/nextjs";
+
+<Protect feature="ai_flashcard_generation" fallback={<UpgradePrompt />}>
+  <AiGenerateButton />
+</Protect>
+```
+
+## Pricing page — `<PricingTable />`
+
+```tsx
+import { PricingTable } from "@clerk/nextjs";
+
+export default function PricingPage() {
+  return (
+    <div className="mx-auto max-w-3xl px-4">
+      <PricingTable />
+    </div>
+  );
+}
+```
+
+## Enforcement Rules
+
+1. **Prefer feature checks** — use `has({ feature: "..." })` over plan checks when gating specific capabilities.
+2. **Enforce in Server Actions** — UI gating alone is not enough; validate before every mutation.
+3. **Deck limit (free users)** — before creating a deck, if the user lacks `unlimited_decks`, count their decks and reject when they already have 3.
+4. **AI generation (Pro only)** — require `ai_flashcard_generation` in the server action that generates cards.
+5. **Upgrade UX** — when access is denied, show a clear upgrade path (link to pricing or `<PricingTable />`), not a generic error.
+
+## Examples
+
+```typescript
+// ❌ BAD — only hides button in UI, no server check
+<Button onClick={createDeck}>Create deck</Button>
+
+// ✅ GOOD — enforce deck limit in Server Action
+export async function createDeck(input: CreateDeckInput) {
+  const { userId, has } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  if (!has({ feature: "unlimited_decks" })) {
+    const existing = await db
+      .select()
+      .from(decksTable)
+      .where(eq(decksTable.userId, userId));
+    if (existing.length >= 3) {
+      throw new Error("Free plan allows up to 3 decks. Upgrade to Pro for unlimited decks.");
+    }
+  }
+
+  // ... create deck
+}
+```
+
+```tsx
+// ✅ GOOD — protect Pro-only UI
+<Protect feature="ai_flashcard_generation" fallback={<Link href="/pricing">Upgrade to Pro</Link>}>
+  <GenerateWithAiButton deckId={deckId} />
+</Protect>
+```

@@ -1,0 +1,112 @@
+---
+alwaysApply: true
+---
+# Vercel AI — Flashcard Generation
+
+AI flashcard generation uses the [Vercel AI SDK](https://ai-sdk.dev) (`ai`) with the OpenAI provider (`@ai-sdk/openai`). All generation runs **server-side** in a Server Action — never from Client Components or Route Handlers.
+
+## Packages
+
+```bash
+npm install ai @ai-sdk/openai
+```
+
+Set `OPENAI_API_KEY` in `.env.local`. The OpenAI provider reads it automatically.
+
+## Structured Output — Array of Cards
+
+Use `generateText` with `Output.object()` and a Zod schema whose `cards` property is an array of `{ front, back }` objects. This mirrors the AI SDK recipe example but targets flashcards.
+
+```typescript
+import { generateText, Output } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { z } from "zod";
+
+const flashcardSchema = z.object({
+  front: z.string().describe("Question or term on the front of the card"),
+  back: z.string().describe("Answer or definition on the back of the card"),
+});
+
+const flashcardsOutputSchema = z.object({
+  cards: z
+    .array(flashcardSchema)
+    .describe("The generated flashcards"),
+});
+
+const count = 10; // validate from user input with Zod before calling
+
+const { output } = await generateText({
+  model: openai("gpt-4o-mini"),
+  output: Output.object({
+    name: "Flashcards",
+    description: "A set of flashcards with front and back text",
+    schema: flashcardsOutputSchema,
+  }),
+  prompt: `Generate exactly ${count} flashcards about "${topic}" for a deck titled "${deckTitle}". Each card must have a concise front and a clear back.`,
+});
+
+// output.cards is typed as { front: string; back: string }[]
+```
+
+**Alternative:** use `Output.array({ element: flashcardSchema })` when you only need a bare array (no wrapper object).
+
+## Server Action Pattern
+
+Combine with [server-data-patterns.mdc](mdc:.cursor/rules/server-data-patterns.mdc), [clerk-auth.mdc](mdc:.cursor/rules/clerk-auth.mdc), and [clerk-billing.mdc](mdc:.cursor/rules/clerk-billing.mdc):
+
+1. Validate input with Zod (`deckId`, `topic`, `count`).
+2. `auth()` — require `userId` and `has({ feature: "ai_flashcard_generation" })`.
+3. Verify deck ownership via `getOwnedDeck`.
+4. Call `generateText` with the schema above.
+5. Insert `output.cards` into [cardsTable](mdc:src/db/schema.ts) via Drizzle (`deckId`, `front`, `back`).
+6. `revalidatePath` for the deck page.
+
+```typescript
+// ✅ GOOD — Pro-gated, owned deck, structured output, persisted via Drizzle
+export async function generateCardsWithAi(input: GenerateCardsInput) {
+  const { userId, has } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+  if (!has({ feature: "ai_flashcard_generation" })) {
+    throw new Error("Upgrade to Pro to generate flashcards with AI.");
+  }
+
+  const { deckId, topic, count } = generateCardsSchema.parse(input);
+  const deck = await getOwnedDeck(deckId, userId);
+  if (!deck) throw new Error("Deck not found");
+
+  const { output } = await generateText({ /* ... */ });
+
+  await db.insert(cardsTable).values(
+    output.cards.map((card) => ({ deckId, front: card.front, back: card.back })),
+  );
+
+  revalidatePath(`/dashboard/decks/${deckId}`);
+}
+```
+
+## Rules
+
+1. **Never call OpenAI from the client** — wrap in a `"use server"` action.
+2. **Gate with `ai_flashcard_generation`** server-side; use `<Protect feature="ai_flashcard_generation">` in UI only as a supplement.
+3. **Validate `count`** with Zod (e.g. `z.number().int().min(1).max(20)`) before building the prompt.
+4. **Use `.describe()` on schema fields** to improve generation quality.
+5. **Handle `NoObjectGeneratedError`** when the model fails to produce valid structured output.
+6. **Match card field limits** — align with existing card schemas (`max(5000)` for front/back in [cards.ts](mdc:src/app/actions/cards.ts)).
+
+## Examples
+
+```typescript
+// ❌ BAD — unstructured text, manual JSON.parse
+const { text } = await generateText({ model, prompt });
+const cards = JSON.parse(text);
+
+// ❌ BAD — no billing check, trusts client for deck access
+export async function generateCards({ deckId, topic }) {
+  const { output } = await generateText({ /* ... */ });
+  await db.insert(cardsTable).values(output.cards.map(/* ... */));
+}
+
+// ❌ BAD — AI call in a Client Component or Route Handler
+"use client";
+const cards = await generateText({ /* ... */ });
+```

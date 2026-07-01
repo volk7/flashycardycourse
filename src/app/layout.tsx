@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { Poppins } from "next/font/google";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -30,28 +31,30 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <ClerkProvider appearance={{ theme: shadcn }}>
-          <header className="border-b px-6 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-6">
-              <Link href="/" className="font-semibold text-lg">FlashyCardy</Link>
-              <Show when="signed-in">
-                <Link href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Dashboard</Link>
-              </Show>
-            </div>
-            <div className="flex items-center gap-3">
-              <Show when="signed-out">
-                <SignInButton mode="modal">
-                  <Button variant="outline" size="sm">Sign in</Button>
-                </SignInButton>
-                <SignUpButton mode="modal">
-                  <Button size="sm">Sign up</Button>
-                </SignUpButton>
-              </Show>
-              <Show when="signed-in">
-                <UserButton />
-              </Show>
-            </div>
-          </header>
-          {children}
+          <TooltipProvider>
+            <header className="border-b px-6 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <Link href="/" className="font-semibold text-lg">FlashyCardy</Link>
+                <Show when="signed-in">
+                  <Link href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Dashboard</Link>
+                </Show>
+              </div>
+              <div className="flex items-center gap-3">
+                <Show when="signed-out">
+                  <SignInButton mode="modal" forceRedirectUrl="/dashboard">
+                    <Button variant="outline" size="sm">Sign in</Button>
+                  </SignInButton>
+                  <SignUpButton mode="modal" forceRedirectUrl="/dashboard">
+                    <Button size="sm">Sign up</Button>
+                  </SignUpButton>
+                </Show>
+                <Show when="signed-in">
+                  <UserButton />
+                </Show>
+              </div>
+            </header>
+            {children}
+          </TooltipProvider>
         </ClerkProvider>
       </body>
     </html>
